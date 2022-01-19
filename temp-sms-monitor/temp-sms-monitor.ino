@@ -12,67 +12,55 @@ OneWire oneWire(ONE_WIRE_BUS);
 // Pass oneWire reference to DallasTemperature library
 DallasTemperature sensors(&oneWire);
 
+SoftwareSerial modemSerial(2, 3);
+
+// DEFINE constants
+#define MODEM_SPEED 115200
 #define NUMBER_STR "0703725262"
+float UPPER_LIMIT = 30.0;
+float LOWER_LIMIT = 15.0;
 
-String cmd = "";
-
-SoftwareSerial mySerial(2, 3);
-
-void sendSMS(){
-  mySerial.println("AT+CMGF=1");
+void sendSMS(String message)
+{
+  modemSerial.print("AT+CMGS=\"");
+  modemSerial.print(NUMBER_STR);
+  modemSerial.print("\"\r\n");
   delay(500);
-  mySerial.print("AT+CMGS=\"");
-  mySerial.print(NUMBER_STR);
-  mySerial.print("\"\r\n");
+  modemSerial.print(message);
   delay(500);
-  mySerial.print("Yo!");
-  delay(500);
-  mySerial.write(26);
+  modemSerial.write(26); // write Ctrl+Z to end message
 }
 
-void updateSerial()
-{
-  while (Serial.available()) 
+void readModem()
+{  
+  while(modemSerial.available()) 
   {
-
-    cmd+=(char)Serial.read();
- 
-    if(cmd!=""){
-      cmd.trim();  // Remove added LF in transmit
-      Serial.println("got S");
-
-      if (cmd.equals("S")) {
-        sendSMS();
-      } else {
-        mySerial.print(cmd);
-        mySerial.println("");
-      }
-    }
-  }
-  
-  while(mySerial.available()) 
-  {
-    Serial.write(mySerial.read());//Forward what Software Serial received to Serial Port
+    Serial.write(modemSerial.read());//Forward what Software Serial received to Serial Port
   }
 }
 
 void setup(void)
 {
-  Serial.begin(9600);
+  Serial.begin(9600); // init console
   Serial.println("Initializing...");
 
   sensors.begin();
 
-  mySerial.begin(115200);
+  modemSerial.begin(MODEM_SPEED);
 
   delay(5000);
 
-  mySerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
-  updateSerial();
-//  mySerial.println("AT+CMGF=1");          // Configuration for sending SMS
-//  updateSerial();
-//  mySerial.println("AT+CNMI=1,2,0,0,0");  // Configuration for receiving SMS
-//  updateSerial();
+  modemSerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
+  delay(200);
+  readModem();
+  
+  modemSerial.println("AT+CMGF=1");
+  delay(500);
+  readModem();
+
+//  modemSerial.println("AT+CNMI=1,2,0,0,0");  // Configuration for receiving SMS
+//  delay(200);
+//  readModem();
 }
 
 void loop(void)
@@ -84,7 +72,19 @@ void loop(void)
   Serial.print("Temperature: ");
   Serial.print(tempValue);
   Serial.print("C\n");
+
+  if (tempValue > UPPER_LIMIT)
+  {
+    Serial.print("UPPER LIMIT reached\n\r");
+  }
+  else if (tempValue < LOWER_LIMIT)
+  {
+    Serial.print("LOWER LIMIT reached\n\r");
+  }
+
+  modemSerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
+  delay(200);
+  readModem();
   
-  updateSerial();
   delay(1000);
 }
