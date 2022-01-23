@@ -4,16 +4,17 @@
 
 #include "SoftwareSerial.h"
 
+// constants
+#define MODEM_ENABLE
 //#define SMS_ENABLE
-// Data wire is plugged into digital pin 2 on the Arduino
+#define EEPROM_START 0
 #define ONE_WIRE_BUS 4
-
-// DEFINE constants
 #define MODEM_SPEED 9600
 #define NUMBER_STR "0703725262"
-float UPPER_LIMIT = 30.0;
-float LOWER_LIMIT = 15.0;
-#define EEPROM_START 0
+
+const float UPPER_LIMIT = 30.0;                   // hi temp limit (celsius)
+const float LOWER_LIMIT = 15.0;                   // lo temp limit (celsius)
+const long REBOOT_INTERVAL = 3600 * 24 * 7;        // reboot interval: 7 days
 
 enum Alerts
 {
@@ -22,20 +23,16 @@ enum Alerts
   LowTempError,
 };
 
-void(* resetFunc) (void) = 0; //declare reset function @ address 0
+void(* resetFunc) (void) = 0;               //declare reset function @ address 0
 
+// variables
 unsigned long upTimeSeconds = 0;
 bool hasLimit=false;
 
-// Setup a oneWire instance to communicate with any OneWire device
-OneWire oneWire(ONE_WIRE_BUS);  
-
-// Pass oneWire reference to DallasTemperature library
-DallasTemperature sensors(&oneWire);
-
+OneWire oneWire(ONE_WIRE_BUS);              // Setup a oneWire instance to communicate with any OneWire device
+DallasTemperature sensors(&oneWire);        // Pass oneWire reference to DallasTemperature library
 SoftwareSerial modemSerial(2, 3);
 
-//
 /////////////////////////////////////////////////
 void sendSMS(char *message)
 {
@@ -53,7 +50,6 @@ void sendSMS(char *message)
 #endif
 }
 
-//
 /////////////////////////////////////////////////
 void readModem()
 {  
@@ -63,7 +59,6 @@ void readModem()
   }
 }
 
-//
 /////////////////////////////////////////////////
 int checkLimits(float temperatureValue)
 {
@@ -81,18 +76,16 @@ int checkLimits(float temperatureValue)
   return NoError;
 }
 
-//
 /////////////////////////////////////////////////
-void upTimeToString(char *outString, unsigned long currentUpTimeSeconds)
+void upTimeToString(char *outString, unsigned long seconds)
 {
-    int hour = currentUpTimeSeconds / (3600);
-  int minute = (currentUpTimeSeconds - hour * 3600) /60;
-  int second = (currentUpTimeSeconds - hour * 3600) - minute * 60;
+    int hour = seconds / (3600);
+  int minute = (seconds - hour * 3600) /60;
+  int second = (seconds - hour * 3600) - minute * 60;
 
   sprintf(outString, "%dh %dm %ds ", hour, minute, second);
 }
 
-//
 /////////////////////////////////////////////////
 void writeTimeToEEPROM(unsigned long currentTime)
 {
@@ -103,7 +96,6 @@ void writeTimeToEEPROM(unsigned long currentTime)
   EEPROM.write(EEPROM_START + 3, (currentTime & 0xFF000000) >> 24);
 }
 
-//
 /////////////////////////////////////////////////
 unsigned long readTimeFromEEPROM()
 {
@@ -113,25 +105,34 @@ unsigned long readTimeFromEEPROM()
   unsigned long v3 = EEPROM.read(EEPROM_START + 2);
   unsigned long v4 = EEPROM.read(EEPROM_START + 3);
 
-  Serial.println(v1);
-  Serial.println(v2);
-  Serial.println(v3);
-  Serial.println(v4);
+//  Serial.println(v1);
+//  Serial.println(v2);
+//  Serial.println(v3);
+//  Serial.println(v4);
   
-  return v1 + v2 << 8 + v3 << 16 + v4 << 24;
+  return long(v1) + long(v2 << 8) + long(v3 << 16) + long(v4 << 24);
 }
 
 //
 /////////////////////////////////////////////////
 void initModem()
 {
+#ifdef MODEM_ENABLE
+  modemSerial.begin(MODEM_SPEED);
+  delay(5000);
   modemSerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
   delay(200);
   readModem();
+  #ifdef SMS_ENABLE
+    modemSerial.println("AT+CMGF=1");
+    delay(500);
+    readModem();
   
-  modemSerial.println("AT+CMGF=1");
-  delay(500);
-  readModem();
+  //  modemSerial.println("AT+CNMI=1,2,0,0,0");  // Configuration for receiving SMS
+  //  delay(200);
+  //  readModem();
+  #endif
+#endif  
 }
 
 //
@@ -145,19 +146,13 @@ void setup(void)
 
 
   sensors.begin();
-  modemSerial.begin(MODEM_SPEED);
-  delay(5000);
   initModem();
-
-//  modemSerial.println("AT+CNMI=1,2,0,0,0");  // Configuration for receiving SMS
-//  delay(200);
-//  readModem();
 
   // report uptime
   unsigned long lastUptime = readTimeFromEEPROM();
   char timeString[20];
   upTimeToString(timeString, lastUptime);
-  sprintf(startupMessage, "UPPSTART. Senast uptime %s timmar", timeString);
+  sprintf(startupMessage, "OMSTART.\n\rSenast uptime %s\r\n%ld sekunder", timeString, lastUptime);
   sendSMS(startupMessage);
 
   // clear uptime to be able to detect unscheduled reboots
@@ -211,11 +206,21 @@ void loop(void)
     hasLimit = false;
   }
 
+#ifdef SMS_ENABLE
   modemSerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
   delay(200);
   readModem();
+#endif
+
+  delay(2000);
   
-  delay(1000);
-  
-  upTimeSeconds = millis() / 1000;            // store current uptime
+  upTimeSeconds = millis() / 1000;            // current uptime
+
+  if (upTimeSeconds > REBOOT_INTERVAL)
+  {
+    writeTimeToEEPROM(upTimeSeconds);
+    Serial.println("time to reboot");
+    delay(300);
+    resetFunc();    
+  }
 }
