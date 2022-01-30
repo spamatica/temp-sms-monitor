@@ -6,15 +6,19 @@
 
 // constants
 #define MODEM_ENABLE
-//#define SMS_ENABLE
+#define SMS_ENABLE
 #define EEPROM_START 0
 #define ONE_WIRE_BUS 4
 #define MODEM_SPEED 9600
 #define NUMBER_STR "0703725262"
 
-const float UPPER_LIMIT = 30.0;                   // hi temp limit (celsius)
-const float LOWER_LIMIT = 15.0;                   // lo temp limit (celsius)
-const long REBOOT_INTERVAL = 3600 * 24 * 7;        // reboot interval: 7 days
+const float UPPER_LIMIT = 60.0;                   // hi temp limit (celsius)
+const float LOWER_LIMIT = 30.0;                   // lo temp limit (celsius) - 30.0
+const long REBOOT_INTERVAL = 3600UL * 24UL * 7UL; // reboot interval: 7 days
+
+float lastTemperature = 0.0;
+char temperatureAsString[5];
+char serialReadBuffer[100];
 
 enum Alerts
 {
@@ -31,13 +35,30 @@ bool hasLimit=false;
 
 OneWire oneWire(ONE_WIRE_BUS);              // Setup a oneWire instance to communicate with any OneWire device
 DallasTemperature sensors(&oneWire);        // Pass oneWire reference to DallasTemperature library
-SoftwareSerial modemSerial(2, 3);
+
+#define MODEM_RX_PIN 2
+#define MODEM_TX_PIN 3
+SoftwareSerial modemSerial(MODEM_RX_PIN, MODEM_TX_PIN);
 
 /////////////////////////////////////////////////
 void sendSMS(char *message)
 {
-  Serial.print("SEND SMS: ");
-  Serial.println(message);
+  // get signal quality
+  modemSerial.println("AT+CSQ");
+  delay(100);
+  int cnt = readModem();
+  
+  Serial.print("AT+CSQ reply>");
+  Serial.print(serialReadBuffer);
+  Serial.println("<");
+
+  // hack in a null terminator early to strip off the end of the string
+  serialReadBuffer[12] = 0;
+
+  Serial.print("SEND SMS: <");
+  Serial.print(message);
+  Serial.print(serialReadBuffer);
+  Serial.println(">");
   
 #ifdef SMS_ENABLE
   modemSerial.print("AT+CMGS=\"");
@@ -45,18 +66,26 @@ void sendSMS(char *message)
   modemSerial.print("\"\r\n");
   delay(500);
   modemSerial.print(message);
+  modemSerial.print(serialReadBuffer);
   delay(500);
   modemSerial.write(26); // write Ctrl+Z to end message
 #endif
 }
 
 /////////////////////////////////////////////////
-void readModem()
-{  
+int readModem()
+{
+  int i=0;
   while(modemSerial.available()) 
   {
-    Serial.write(modemSerial.read());//Forward what Software Serial received to Serial Port
+    char c = modemSerial.read();//Forward what Software Serial received to Serial Port
+    if (c > 0)
+    {
+      serialReadBuffer[i++] = c;
+    }
   }
+  serialReadBuffer[i] = 0;
+  return i;
 }
 
 /////////////////////////////////////////////////
@@ -77,13 +106,13 @@ int checkLimits(float temperatureValue)
 }
 
 /////////////////////////////////////////////////
-void upTimeToString(char *outString, unsigned long seconds)
+void upTimeToString(char *outString, unsigned long inSeconds)
 {
-    int hour = seconds / (3600);
-  int minute = (seconds - hour * 3600) /60;
-  int second = (seconds - hour * 3600) - minute * 60;
+  long hours = inSeconds / 3600UL;
+  long minutes = (inSeconds - hours * 3600UL) / 60UL;
+  long seconds = (inSeconds - hours * 3600UL) - minutes * 60UL;
 
-  sprintf(outString, "%dh %dm %ds ", hour, minute, second);
+  sprintf(outString, "%ldh %ldm %lds ", hours, minutes, seconds);
 }
 
 /////////////////////////////////////////////////
@@ -118,11 +147,17 @@ unsigned long readTimeFromEEPROM()
 void initModem()
 {
 #ifdef MODEM_ENABLE
+  pinMode(MODEM_RX_PIN, INPUT);
+  pinMode(MODEM_TX_PIN, OUTPUT);
   modemSerial.begin(MODEM_SPEED);
   delay(5000);
   modemSerial.println("AT");                 // Sends an ATTENTION command, reply should be OK
   delay(200);
   readModem();
+  modemSerial.println("ATE0");                 // Sends an ATTENTION command, reply should be OK
+  delay(200);
+  readModem();
+
   #ifdef SMS_ENABLE
     modemSerial.println("AT+CMGF=1");
     delay(500);
@@ -134,12 +169,21 @@ void initModem()
   #endif
 #endif  
 }
+void getTemperature(char *temperatureAsString)
+{
+  // Send the command to get temperatures
+  sensors.requestTemperatures(); 
+  lastTemperature = sensors.getTempCByIndex(0);
+
+  dtostrf(lastTemperature, 5, 2, temperatureAsString);
+}
+
 
 //
 /////////////////////////////////////////////////
 void setup(void)
 {
-  char startupMessage[40];
+  char startupMessage[160];
 
   Serial.begin(9600); // init console
   Serial.println("Initializing...");
@@ -148,11 +192,14 @@ void setup(void)
   sensors.begin();
   initModem();
 
+
+  getTemperature(temperatureAsString);
+
   // report uptime
   unsigned long lastUptime = readTimeFromEEPROM();
   char timeString[20];
   upTimeToString(timeString, lastUptime);
-  sprintf(startupMessage, "OMSTART.\n\rSenast uptime %s\r\n%ld sekunder", timeString, lastUptime);
+  sprintf(startupMessage, "OMSTART.\n\rSenast uptime %s\r\n%ld sekunder Temp: %s", timeString, lastUptime, temperatureAsString);
   sendSMS(startupMessage);
 
   // clear uptime to be able to detect unscheduled reboots
@@ -164,14 +211,10 @@ void setup(void)
 void loop(void)
 { 
   char messageString[40];
-  char temperatureAsString[5];
   char timeString[20];
-  
-  // Send the command to get temperatures
-  sensors.requestTemperatures(); 
-  float temperatureValue = sensors.getTempCByIndex(0);
 
-  dtostrf(temperatureValue, 5, 2, temperatureAsString);
+  getTemperature(temperatureAsString);
+
   //print the temperature in Celsius
   Serial.print("Temperature: ");
   Serial.print(temperatureAsString);
@@ -181,7 +224,7 @@ void loop(void)
   sprintf(messageString, "uptime %s", timeString);
   Serial.println(messageString);
   
-  int currentLimit = checkLimits(temperatureValue);
+  int currentLimit = checkLimits(lastTemperature);
 
   if (hasLimit == false && currentLimit != NoError)
   {
