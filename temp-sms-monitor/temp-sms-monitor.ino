@@ -10,10 +10,10 @@
 #define EEPROM_START 0
 #define ONE_WIRE_BUS 4
 #define MODEM_SPEED 9600
-#define NUMBER_STR "0703725262"
+#define NUMBER_STR "0703284322"
 
-const float UPPER_LIMIT = 60.0;                   // hi temp limit (celsius)
-const float LOWER_LIMIT = 30.0;                   // lo temp limit (celsius) - 30.0
+const float UPPER_LIMIT = 100.0;                   // hi temp limit (celsius)
+const float LOWER_LIMIT = 25.0;                   // lo temp limit (celsius) - 30.0
 const long REBOOT_INTERVAL = 3600UL * 24UL * 7UL; // reboot interval: 7 days
 
 float lastTemperature = 0.0;
