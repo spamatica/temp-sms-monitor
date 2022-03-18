@@ -102,6 +102,22 @@ int checkLimits(float temperatureValue)
     return LowTempError;
   }
 
+  if (hasLimit)
+  {
+    // check again but with lesser margin to allow for some hysteresis
+    if (temperatureValue > (UPPER_LIMIT - 1.0))
+    {
+      Serial.print("UPPER LIMIT reached\n\r");
+      return HiTempError;
+    }
+    else if (temperatureValue < (LOWER_LIMIT + 1.0))
+    {
+      Serial.print("LOWER LIMIT reached\n\r");
+      return LowTempError;
+    }
+
+  }
+
   return NoError;
 }
 
@@ -243,7 +259,7 @@ void loop(void)
     hasLimit = true;
   }
  
-  if (hasLimit && currentLimit == 0)
+  if (hasLimit && currentLimit == NoError)
   {
     // time to clear 
     hasLimit = false;
